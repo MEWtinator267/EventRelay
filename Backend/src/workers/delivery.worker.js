@@ -9,6 +9,7 @@ const worker = new Worker(
   "delivery-queue",
   async (job) => {
     const {
+      deliveryId,  // If provided, this is a retry - update existing record
       eventId,
       eventType,
       payload,
@@ -35,41 +36,64 @@ const worker = new Worker(
         }
       );
 
-      await pool.query(
-        `
-        INSERT INTO deliveries
-        (event_id, status, attempts, response_code, webhook_url)
-        VALUES ($1, $2, $3, $4, $5)
-        `,
-        [
-          eventId,
-          DELIVERY_STATUS.SUCCESS,
-          attempt,
-          response.status,
-          webhookUrl,
-        ]
-      );
+      // If deliveryId exists (retry), UPDATE the existing record; otherwise INSERT new
+      if (deliveryId) {
+        await pool.query(
+          `
+          UPDATE deliveries
+          SET status = $1, attempts = attempts + 1, response_code = $2, last_error = NULL
+          WHERE id = $3
+          `,
+          [DELIVERY_STATUS.SUCCESS, response.status, deliveryId]
+        );
+      } else {
+        await pool.query(
+          `
+          INSERT INTO deliveries
+          (event_id, status, attempts, response_code, webhook_url)
+          VALUES ($1, $2, $3, $4, $5)
+          `,
+          [
+            eventId,
+            DELIVERY_STATUS.SUCCESS,
+            attempt,
+            response.status,
+            webhookUrl,
+          ]
+        );
+      }
 
       return true;
     } catch (err) {
       const isLastAttempt = attempt >= job.opts.attempts;
+      const status = isLastAttempt ? DELIVERY_STATUS.DLQ : DELIVERY_STATUS.FAILED;
 
-      await pool.query(
-        `
-        INSERT INTO deliveries
-        (event_id, status, attempts, last_error, webhook_url)
-        VALUES ($1, $2, $3, $4, $5)
-        `,
-        [
-          eventId,
-          isLastAttempt
-            ? DELIVERY_STATUS.DLQ
-            : DELIVERY_STATUS.FAILED,
-          attempt,
-          err.message,
-          webhookUrl,
-        ]
-      );
+      // If deliveryId exists (retry), UPDATE the existing record; otherwise INSERT new
+      if (deliveryId) {
+        await pool.query(
+          `
+          UPDATE deliveries
+          SET status = $1, attempts = attempts + 1, last_error = $2
+          WHERE id = $3
+          `,
+          [status, err.message, deliveryId]
+        );
+      } else {
+        await pool.query(
+          `
+          INSERT INTO deliveries
+          (event_id, status, attempts, last_error, webhook_url)
+          VALUES ($1, $2, $3, $4, $5)
+          `,
+          [
+            eventId,
+            status,
+            attempt,
+            err.message,
+            webhookUrl,
+          ]
+        );
+      }
 
       if (isLastAttempt) return true;
       throw err;

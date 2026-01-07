@@ -1,10 +1,14 @@
-import dotenv from "dotenv";
-dotenv.config();
+
 
 import app from "./app.js";
 import pool from "./db.js";
 
 const PORT = process.env.PORT || 4000;
+
+if (process.env.NODE_ENV !== "production") {
+  const dotenv = await import("dotenv");
+  dotenv.config();
+}
 
 async function start() {
   try {
