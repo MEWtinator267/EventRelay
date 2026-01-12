@@ -1,5 +1,5 @@
 node_modules
-.env
+.env. // damm this is hectic
 .git.  //the final one
 .gitignore
 npm-debug.log           // just ignore this shit man all is set
